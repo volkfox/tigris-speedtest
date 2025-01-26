@@ -152,8 +152,7 @@ def download_file(s3_client, filename, replace_original=False):
         download_path = os.path.join(DATA_DIR, filename)
     else:
         download_dir = os.path.join(DATA_DIR, 'downloads')
-        if not os.path.exists(download_dir):
-            os.makedirs(download_dir)
+        os.makedirs(download_dir, exist_ok=True)
         download_path = os.path.join(download_dir, filename)
     
     # Ensure parent directory exists
