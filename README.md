@@ -98,11 +98,6 @@ Download all files
 ```
 python speed_test.py --download --all
 ```
-Create and upload modified version of large file
-```
-python speed_test.py --create --large --modified
-python speed_test.py --upload --large --modified
-```
 List all objects
 ```
 python speed_test.py --list
