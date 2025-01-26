@@ -341,7 +341,9 @@ def list_bucket_contents(args):
                     head = svc.head_object(Bucket=BUCKET_NAME, Key=key)
                     print("  Metadata:")
                     print(f"    Last Modified: {head.get('LastModified')}")
-                    print(f"    ETag: {head.get('ETag', '').strip('\"')}")
+                    # print(f"    ETag: {head.get('ETag', '').strip('\"')}")
+                    etag = head.get('ETag', '').strip('"')
+                    print(f"    ETag: {etag}")
                     
                     print(f"    Content Type: {head.get('ContentType', 'not set')}")
                     if 'Metadata' in head:
