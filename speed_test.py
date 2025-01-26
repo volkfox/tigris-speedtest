@@ -62,7 +62,6 @@ def parse_args():
     parser.add_argument('--all', action='store_true', help='Run all tests')
     parser.add_argument('--large', action='store_true', help='Test large file operations')
     parser.add_argument('--small', action='store_true', help='Test small files operations')
-    parser.add_argument('--modified', action='store_true', help='Test modified large file upload')
     parser.add_argument('--size', type=int, default=LARGE_FILE_SIZE,
                        help='Size of large file in bytes (default: 1GB)')
     parser.add_argument('--times', type=int, default=1,
@@ -172,8 +171,6 @@ def create_test_files(args):
     
     if args.large or args.all:
         create_large_file('large_file.dat', args.size)
-        if args.modified:
-            create_large_file('large_file.dat', args.size)  # Creates a new random file with same name
     
     if args.small or args.all:
         create_small_files()
