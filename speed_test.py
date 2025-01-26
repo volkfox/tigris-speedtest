@@ -69,6 +69,8 @@ def parse_args():
                        help='Number of times to repeat large file download (default: 1)')
     parser.add_argument('--list', action='store_true', help='List objects in bucket')
     parser.add_argument('--query', type=str, help='Optional metadata query for listing (e.g. "`Content-Type` = \'text/plain\'")')
+    parser.add_argument('--replace-original', action='store_true', 
+                       help='Replace original files with downloaded ones')
     return parser.parse_args()
 
 def ensure_data_directory():
@@ -144,12 +146,18 @@ def cleanup_downloads():
     if os.path.exists(download_dir):
         shutil.rmtree(download_dir)
 
-def download_file(s3_client, filename):
+def download_file(s3_client, filename, replace_original=False):
     """Download a single file from S3"""
-    download_dir = os.path.join(DATA_DIR, 'downloads')
-    if not os.path.exists(download_dir):
-        os.makedirs(download_dir)
-    download_path = os.path.join(download_dir, filename)
+    if replace_original:
+        download_path = os.path.join(DATA_DIR, filename)
+    else:
+        download_dir = os.path.join(DATA_DIR, 'downloads')
+        if not os.path.exists(download_dir):
+            os.makedirs(download_dir)
+        download_path = os.path.join(download_dir, filename)
+    
+    # Ensure parent directory exists
+    os.makedirs(os.path.dirname(download_path), exist_ok=True)
     s3_client.download_file(BUCKET_NAME, filename, download_path)
     return download_path
 
@@ -213,10 +221,12 @@ def download_test_files(args):
                 try:
                     start_time = time.time()
                     original_path = os.path.join(DATA_DIR, 'large_file.dat')
-                    if os.path.exists(original_path) and i == 0:  # Only print original hash once
+                    if os.path.exists(original_path) and i == 0 and not args.replace_original:
                         print(f"Original file MD5: {calculate_md5(original_path)}")
                     
-                    download_path = download_file(s3_client, 'large_file.dat')
+                    # Only replace original on last iteration if replace_original is True
+                    replace_this_time = args.replace_original and (i == args.times - 1)
+                    download_path = download_file(s3_client, 'large_file.dat', replace_this_time)
                     file_size = os.path.getsize(download_path)
                     duration = time.time() - start_time
                     speed_mbps = (file_size / 1024 / 1024) / duration
@@ -225,20 +235,19 @@ def download_test_files(args):
                     print(f"Downloaded file MD5: {calculate_md5(download_path)}")
                     print(f"Download Speed: {speed_mbps:.2f} MB/s (Duration: {duration:.2f}s)")
                     
-                    # Verify integrity
-                    print("Verifying file integrity...")
-                    if os.path.exists(original_path):
+                    # Verify integrity if original exists and we're not replacing it
+                    if os.path.exists(original_path) and not replace_this_time:
+                        print("Verifying file integrity...")
                         if verify_file_integrity(original_path, download_path):
                             print("✓ Large file integrity verified")
                         else:
                             print("✗ Large file integrity check failed")
                             integrity_failures.append(f'large_file.dat (iteration {i+1})')
-                    else:
-                        print("! Original file not found - skipping integrity check")
                     
                     # Cleanup after each iteration except the last one
                     if i < args.times - 1:
-                        cleanup_downloads()
+                        if not args.replace_original:
+                            cleanup_downloads()
                 
                 except Exception as e:
                     print(f"Error downloading large file: {e}")
@@ -256,46 +265,49 @@ def download_test_files(args):
             try:
                 start_time = time.time()
                 with ThreadPoolExecutor(max_workers=10) as executor:
-                    downloaded = list(tqdm(executor.map(lambda f: download_file(s3_client, f), filenames), 
-                                        total=len(filenames), 
-                                        desc="Downloading"))
+                    downloaded = list(tqdm(executor.map(
+                        lambda f: download_file(s3_client, f, args.replace_original), 
+                        filenames
+                    ), total=len(filenames), desc="Downloading"))
                 total_size = sum(os.path.getsize(f) for f in downloaded)
                 print(measure_transfer_speed("Download", start_time, total_size))
                 
-                # Verify integrity
-                print("Verifying files integrity...")
-                verified_count = 0
-                failed_count = 0
-                with tqdm(total=len(filenames), desc="Verifying") as pbar:
-                    for i, filename in enumerate(filenames):
-                        original_path = os.path.join(DATA_DIR, filename)
-                        download_path = os.path.join(DATA_DIR, 'downloads', filename)
-                        if os.path.exists(original_path):
-                            if verify_file_integrity(original_path, download_path):
-                                verified_count += 1
-                            else:
-                                failed_count += 1
-                                integrity_failures.append(filename)
-                        pbar.update(1)
-                
-                print(f"✓ {verified_count} files verified successfully")
-                if failed_count > 0:
-                    print(f"✗ {failed_count} files failed integrity check")
+                # Verify integrity only if not replacing originals
+                if not args.replace_original:
+                    print("Verifying files integrity...")
+                    verified_count = 0
+                    failed_count = 0
+                    with tqdm(total=len(filenames), desc="Verifying") as pbar:
+                        for i, filename in enumerate(filenames):
+                            original_path = os.path.join(DATA_DIR, filename)
+                            download_path = os.path.join(DATA_DIR, 'downloads', filename)
+                            if os.path.exists(original_path):
+                                if verify_file_integrity(original_path, download_path):
+                                    verified_count += 1
+                                else:
+                                    failed_count += 1
+                                    integrity_failures.append(filename)
+                            pbar.update(1)
+                    
+                    print(f"✓ {verified_count} files verified successfully")
+                    if failed_count > 0:
+                        print(f"✗ {failed_count} files failed integrity check")
                 
             except Exception as e:
                 print(f"Error downloading small files: {e}")
     
     finally:
-        # Print integrity summary
-        if integrity_failures:
+        # Print integrity summary if not replacing originals
+        if integrity_failures and not args.replace_original:
             print("\nIntegrity check failed for the following files:")
             for filename in integrity_failures:
                 print(f"- {filename}")
         
-        # Cleanup downloaded files
-        print("\nCleaning up downloaded files...")
-        cleanup_downloads()
-        print("Cleanup complete")
+        # Cleanup downloaded files only if not replacing originals
+        if not args.replace_original:
+            print("\nCleaning up downloaded files...")
+            cleanup_downloads()
+            print("Cleanup complete")
 
 def list_bucket_contents(args):
     """List contents of the bucket with optional metadata query"""
@@ -330,6 +342,7 @@ def list_bucket_contents(args):
                     print("  Metadata:")
                     print(f"    Last Modified: {head.get('LastModified')}")
                     print(f"    ETag: {head.get('ETag', '').strip('\"')}")
+                    
                     print(f"    Content Type: {head.get('ContentType', 'not set')}")
                     if 'Metadata' in head:
                         for k, v in head['Metadata'].items():
