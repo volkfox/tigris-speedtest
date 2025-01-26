@@ -13,8 +13,8 @@
 # python speed_test.py --download --large --times 10
 #
 # Advanced:
-# List objects with specific metadata query
-# python speed_test.py --list --query "'Content-Type' = 'text/plain'"
+# List objects with specific metadata query example:
+# python speed_test.py --list --query '`Content-Type` = "binary/octet-stream"'
 
 
 import os
@@ -28,12 +28,22 @@ from tqdm import tqdm
 import hashlib
 import shutil
 
-# S3 Configuration
+# Check required environment variables
+required_vars = ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_ENDPOINT_URL', 'AWS_REGION']
+missing_vars = [var for var in required_vars if not os.getenv(var)]
+if missing_vars:
+    print("Error: Missing required environment variables:")
+    for var in missing_vars:
+        print(f"  {var}")
+    print("Please ensure all required variables are set before running the script.")
+    exit(1)
+
+# S3 Configuration from environment
 S3_CONFIG = {
-    'aws_access_key_id': 'tid_QQjKeHyllqgHbQfVqrrkUnxHbClMYUrpxyogwcjeQzMBcYYPyY',
-    'aws_secret_access_key': 'tsec_5tvCWfn41dtvbtt763zChWVVvrI01o0G9k7SOBKfmTMXzreSWj2g8HAjGikOljyXP1Gm-G',
-    'endpoint_url': 'https://fly.storage.tigris.dev',
-    'region_name': 'auto'
+    'aws_access_key_id': os.getenv('AWS_ACCESS_KEY_ID'),
+    'aws_secret_access_key': os.getenv('AWS_SECRET_ACCESS_KEY'),
+    'endpoint_url': os.getenv('AWS_ENDPOINT_URL'),
+    'region_name': os.getenv('AWS_REGION')
 }
 
 BUCKET_NAME = 'dkh-test'
@@ -298,8 +308,6 @@ def list_bucket_contents(args):
     if args.query:
         def _x_tigris_query(request, query):
             request.headers.add_header('X-Tigris-Query', query.strip())
-            #print (query.strip())
-            #request.headers.add_header('X-Tigris-Query', '`Content-Type` = "text/plain"')
         svc.meta.events.register(
             "before-sign.s3.ListObjectsV2",
             lambda request, **kwargs: _x_tigris_query(request, args.query),
@@ -313,7 +321,22 @@ def list_bucket_contents(args):
             print("\nObjects:")
             for obj in response['Contents']:
                 size_mb = obj['Size'] / (1024 * 1024)
-                print(f"  {obj['Key']} ({size_mb:.2f} MB)")
+                key = obj['Key']
+                print(f"\n  {key} ({size_mb:.2f} MB)")
+                
+                # Get metadata using HeadObject
+                try:
+                    head = svc.head_object(Bucket=BUCKET_NAME, Key=key)
+                    print("  Metadata:")
+                    print(f"    Last Modified: {head.get('LastModified')}")
+                    print(f"    ETag: {head.get('ETag', '').strip('\"')}")
+                    print(f"    Content Type: {head.get('ContentType', 'not set')}")
+                    if 'Metadata' in head:
+                        for k, v in head['Metadata'].items():
+                            print(f"    {k}: {v}")
+                except Exception as e:
+                    print(f"    Error getting metadata: {e}")
+                
                 total_size += obj['Size']
             
             print(f"\nTotal objects: {len(response['Contents'])}")
